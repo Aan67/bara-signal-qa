@@ -23,6 +23,11 @@ GROQ_API_KEY   = os.environ.get("GROQ_API_KEY", "")
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
+# ─── CONVERSATION HISTORY ─────────────────────────────────────────────────────
+# Format: {chat_id: {"coin_id": str, "coin_data": dict, "history": [...]}}
+CONV = {}
+MAX_HISTORY = 8  # maksimal 4 tanya-jawab tersimpan
+
 # ─── COIN MAP ─────────────────────────────────────────────────────────────────
 
 COIN_MAP = {
@@ -172,34 +177,48 @@ def search_coin_dynamic(query):
         pass
     return None, None
 
-def detect_coin(text):
-    """Deteksi coin yang disebutkan dalam pesan."""
+SKIP_WORDS = {
+    "yang","dan","atau","ini","itu","mau","bisa","ada","tidak","gimana",
+    "setup","analisis","analisa","bagaimana","kapan","kenapa","berapa",
+    "apa","siapa","dimana","lebih","kurang","sangat","sudah","belum",
+    "akan","sedang","punya","buat","dari","untuk","dengan","pada","di",
+    "ke","kamu","aku","saya","bot","harga","pasar","market","coin","token",
+    "crypto","trading","trader","invest","the","and","or","is","are","was",
+    "how","what","when","why","where","price","buy","sell","good","bad",
+}
+
+def detect_coin(text, last_coin_id=None):
+    """Deteksi coin. Kalau tidak ada di pesan, pakai coin terakhir dari history."""
     text_lower = text.lower()
     words = re.findall(r'\b\w+\b', text_lower)
 
-    # Cek static map dulu (cepat)
+    # Cek static map dulu
     for word in words:
         if word in COIN_MAP:
             return word, COIN_MAP[word]
 
-    # Dynamic search ke CoinGecko sebagai fallback
+    # Dynamic search CoinGecko untuk kata yang berpotensi jadi coin
     for word in words:
-        if len(word) >= 2 and word not in TRIGGER_WORDS and word not in {"yang","dan","atau","ini","itu","mau","bisa","ada","tidak","gimana","setup","analisis","analisa"}:
+        if len(word) >= 2 and word not in SKIP_WORDS and word not in TRIGGER_WORDS:
             coin_id, sym = search_coin_dynamic(word)
             if coin_id:
-                COIN_MAP[word] = coin_id  # cache untuk request berikutnya
+                COIN_MAP[word] = coin_id
                 return word, coin_id
+
+    # Tidak ada coin di pesan → pakai coin terakhir dari conversation
+    if last_coin_id:
+        return None, last_coin_id
 
     return None, None
 
-def is_triggered(text):
+def is_triggered(text, has_history=False):
     """Cek apakah pesan perlu direspon bot."""
     text_lower = text.lower()
-    # Ada coin yang disebut + trigger word, atau ada pertanyaan langsung
     has_coin    = any(w in text_lower for w in COIN_MAP)
     has_trigger = any(w in text_lower for w in TRIGGER_WORDS)
     has_command = text_lower.startswith("/")
-    return has_command or (has_coin and has_trigger) or has_coin
+    # Jika ada conversation history, respon semua pertanyaan lanjutan
+    return has_command or has_coin or has_trigger or has_history
 
 # ─── DATA FETCHER ─────────────────────────────────────────────────────────────
 
@@ -298,7 +317,7 @@ Selalu tutup dengan: "⚠️ BUKAN SARAN FINANSIAL — DYOR"
 
 Format output yang rapi dan mudah dibaca di Telegram."""
 
-def analyze_coin(coin_data, global_data, fg, user_question):
+def analyze_coin(coin_data, global_data, fg, user_question, history=None):
     """Generate AI analysis menggunakan Groq."""
     if not coin_data:
         return "Maaf, data coin tidak ditemukan. Coba ketik simbol yang benar (contoh: BTC, ETH, SOL)"
@@ -340,12 +359,15 @@ Berikan analisis lengkap berdasarkan data di atas.
 """
 
     try:
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        # Tambah history percakapan jika ada
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": ctx})
+
         response = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": ctx},
-            ],
+            messages=messages,
             temperature=0.7,
             max_tokens=800,
         )
@@ -386,71 +408,103 @@ def send_typing(chat_id):
 # ─── WEBHOOK HANDLER ──────────────────────────────────────────────────────────
 
 def process_message(chat_id, msg_id, text, username):
-    """Proses pesan di background thread."""
+    """Proses pesan dengan conversation history."""
     try:
-        # Handle /test
+        # Commands
         if text.startswith("/test"):
-            send_message(chat_id, "Bot aktif! Vercel + Webhook berjalan normal.")
+            send_message(chat_id, "Bot aktif!")
             return
 
-        # Handle /start
         if text.startswith("/start"):
+            CONV.pop(chat_id, None)  # reset history
             send_message(chat_id,
                 "Halo! Saya Bara Signal AI\n\n"
-                "Tanya apa saja tentang crypto:\n"
+                "Tanya tentang coin apapun:\n"
                 "- analisis BTC\n"
-                "- setup untuk ETH sekarang\n"
-                "- gimana kondisi SOL\n"
-                "- rekomendasi DOGE\n\n"
-                "Saya berikan analisis real-time + trade setup lengkap!",
-                reply_to=msg_id
+                "- setup ETH sekarang\n"
+                "- gimana SOL?\n"
+                "- entry DOGE?\n\n"
+                "Saya support SEMUA coin di CoinGecko!\n"
+                "Bisa tanya lanjutan juga (bot ingat konteks).\n\n"
+                "BUKAN SARAN FINANSIAL - DYOR"
             )
             return
 
-        # Handle /help
+        if text.startswith("/reset"):
+            CONV.pop(chat_id, None)
+            send_message(chat_id, "Percakapan direset. Mulai topik baru!")
+            return
+
         if text.startswith("/help"):
             send_message(chat_id,
-                "Cara Pakai Bara Signal AI:\n\n"
-                "Sebut nama coin + pertanyaan:\n"
-                "- analisis BTC\n"
-                "- setup long ETH\n"
-                "- gimana SOL hari ini\n"
-                "- BTC mau pump atau dump?\n"
-                "- entry point DOGE\n\n"
-                "Coin: BTC ETH SOL BNB XRP ADA DOGE AVAX DOT LINK MATIC UNI ATOM LTC NEAR TRX XLM ZEC SUI APT dan banyak lagi!\n\n"
-                "BUKAN SARAN FINANSIAL - DYOR",
-                reply_to=msg_id
+                "Cara pakai:\n\n"
+                "1. Sebut nama coin: analisis BTC\n"
+                "2. Tanya lanjutan: kapan entry? target TP?\n"
+                "3. Ganti coin: sekarang analisis ETH\n"
+                "4. Reset: /reset\n\n"
+                "Support SEMUA coin — kalau tidak dikenal, bot cari otomatis.\n"
+                "BUKAN SARAN FINANSIAL - DYOR"
             )
             return
 
-        if not is_triggered(text):
+        # Ambil conversation state
+        conv = CONV.get(chat_id, {"coin_id": None, "coin_name": None, "history": []})
+        has_history = len(conv["history"]) > 0
+
+        if not is_triggered(text, has_history):
             return
 
-        sym, coin_id = detect_coin(text)
+        # Deteksi coin (dengan fallback ke coin terakhir)
+        sym, coin_id = detect_coin(text, last_coin_id=conv["coin_id"])
+
         if not coin_id:
             send_message(chat_id,
-                "Coin tidak dikenali.\nContoh: analisis BTC, setup ETH, gimana SOL",
-                reply_to=msg_id
+                "Coin tidak dikenali. Contoh: analisis BTC, setup ETH, gimana SOL"
             )
             return
 
-        # Sequential fetch
+        # Fetch data
         coin_data   = fetch_coin_data(coin_id)
         global_data = fetch_global()
         fg          = fetch_fear_greed()
 
         if not coin_data:
-            send_message(chat_id, f"Data {sym.upper()} tidak ditemukan. Coba nama lengkapnya.")
+            # Coba dynamic search sebagai last resort
+            new_id, _ = search_coin_dynamic(sym or text.split()[-1])
+            if new_id and new_id != coin_id:
+                coin_data = fetch_coin_data(new_id)
+                if coin_data:
+                    coin_id = new_id
+
+        if not coin_data:
+            send_message(chat_id,
+                f"Data tidak ditemukan untuk '{sym or text}'.\n"
+                "Coba ketik nama/simbol lengkapnya."
+            )
             return
 
-        analysis = analyze_coin(coin_data, global_data, fg, text)
+        # Generate AI response dengan history
+        analysis = analyze_coin(coin_data, global_data, fg, text, conv["history"])
+
+        # Update conversation history
+        conv["coin_id"]   = coin_id
+        conv["coin_name"] = coin_data["name"]
+        conv["history"].append({"role": "user",      "content": text})
+        conv["history"].append({"role": "assistant",  "content": analysis})
+
+        # Batasi history
+        if len(conv["history"]) > MAX_HISTORY:
+            conv["history"] = conv["history"][-MAX_HISTORY:]
+
+        CONV[chat_id] = conv
+
         send_message(chat_id, analysis)
-        print(f"[DONE] {username} -> {sym.upper()}")
+        print(f"[DONE] {username} -> {coin_data['name']}")
 
     except Exception as e:
         print(f"[PROCESS ERR] {e}")
         try:
-            send_message(chat_id, "Terjadi error, coba lagi.", reply_to=msg_id)
+            send_message(chat_id, "Terjadi error, coba lagi.")
         except:
             pass
 
