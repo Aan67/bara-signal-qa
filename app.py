@@ -26,9 +26,10 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 # ─── COIN MAP ─────────────────────────────────────────────────────────────────
 
 COIN_MAP = {
-    "btc": "bitcoin",       "bitcoin": "bitcoin",
-    "eth": "ethereum",      "ethereum": "ethereum",
-    "sol": "solana",        "solana": "solana",
+    # Major
+    "btc": "bitcoin",           "bitcoin": "bitcoin",
+    "eth": "ethereum",          "ethereum": "ethereum",
+    "sol": "solana",            "solana": "solana",
     "bnb": "binancecoin",
     "xrp": "ripple",
     "ada": "cardano",
@@ -36,7 +37,7 @@ COIN_MAP = {
     "avax": "avalanche-2",
     "dot": "polkadot",
     "link": "chainlink",
-    "matic": "matic-network", "pol": "matic-network",
+    "matic": "matic-network",   "pol": "matic-network",
     "uni": "uniswap",
     "atom": "cosmos",
     "ltc": "litecoin",
@@ -48,43 +49,101 @@ COIN_MAP = {
     "apt": "aptos",
     "op": "optimism",
     "arb": "arbitrum",
-    "pepe": "pepe",
-    "shib": "shiba-inu",
     "ton": "the-open-network",
     "inj": "injective-protocol",
     "sei": "sei-network",
     "tia": "celestia",
-    "wif": "dogwifcoin",
-    "bonk": "bonk",
-    "hype": "hyperliquid",
-    "jup": "jupiter-exchange-solana",
-    "fet": "fetch-ai",
-    "rndr": "render-token",   "render": "render-token",
-    "grt": "the-graph",
+    "kas": "kaspa",
+    "tao": "bittensor",
+    # DeFi
     "aave": "aave",
-    "fil": "filecoin",
-    "icp": "internet-computer",
-    "algo": "algorand",
-    "xtz": "tezos",
-    "sand": "the-sandbox",
-    "mana": "decentraland",
     "crv": "curve-dao-token",
     "mkr": "maker",
     "snx": "havven",
     "ldo": "lido-dao",
-    "ape": "apecoin",
-    "gmt": "stepn",
-    "axs": "axie-infinity",
+    "grt": "the-graph",
     "rune": "thorchain",
-    "kas": "kaspa",
-    "tao": "bittensor",
+    "jup": "jupiter-exchange-solana",
+    "ray": "raydium",
+    "gmx": "gmx",
+    "dydx": "dydx",
+    "pendle": "pendle",
+    "ethfi": "ether-fi",
+    "ena": "ethena",
+    "mnt": "mantle",            "mantle": "mantle",
+    "lista": "lista-dao",
+    # AI / Tech
+    "fet": "fetch-ai",
+    "rndr": "render-token",     "render": "render-token",
     "wld": "worldcoin-wld",
+    "virtual": "virtual-protocol",
+    "ai16z": "ai16z",
+    "aixbt": "aixbt-by-virtuals",
+    "arc": "arc-agi",
+    # Gaming / Metaverse
+    "sand": "the-sandbox",
+    "mana": "decentraland",
+    "axs": "axie-infinity",
+    "gmt": "stepn",
+    "ape": "apecoin",
+    "pixel": "pixels",
+    "ygg": "yield-guild-games",
+    # Layer 2 / Infrastructure
     "pyth": "pyth-network",
     "w": "wormhole",
     "strk": "starknet",
     "zk": "zksync",
-    "not": "notcoin",
     "eigen": "eigenlayer",
+    "alt": "altlayer",
+    "dym": "dymension",
+    "zro": "layerzero",
+    "io": "io-net",
+    "saga": "saga-2",
+    # Meme coins
+    "pepe": "pepe",
+    "shib": "shiba-inu",
+    "wif": "dogwifcoin",
+    "bonk": "bonk",
+    "floki": "floki",
+    "not": "notcoin",
+    "popcat": "popcat",
+    "brett": "based-brett",
+    "mog": "mog-coin",
+    "turbo": "turbo",
+    "pnut": "peanut-the-squirrel",
+    "trump": "official-trump",
+    "bome": "book-of-meme",
+    "mew": "cat-in-a-dogs-world",
+    "fartcoin": "fartcoin",
+    "pengu": "pudgy-penguins",
+    "griffain": "griffain",
+    # Other popular
+    "hype": "hyperliquid",
+    "fil": "filecoin",
+    "icp": "internet-computer",
+    "algo": "algorand",
+    "xtz": "tezos",
+    "ftm": "fantom",            "sonic": "sonic-3",
+    "zil": "zilliqa",
+    "vet": "vechain",
+    "theta": "theta-token",
+    "hbar": "hedera-hashgraph",
+    "egld": "elrond-erd-2",
+    "flow": "flow",
+    "iota": "iota",
+    "xmr": "monero",
+    "gala": "gala",
+    "imx": "immutable-x",
+    "blur": "blur",
+    "magma": "magma",
+    "zeta": "zetachain",
+    "omni": "omni-network",
+    "taiko": "taiko",
+    "mode": "mode",
+    "merlin": "merlin-chain",
+    "banana": "banana-gun",
+    "cookie": "cookie",
+    "griffain": "griffain",
 }
 
 TRIGGER_WORDS = [
@@ -100,13 +159,36 @@ TRIGGER_WORDS = [
 def ts():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+def search_coin_dynamic(query):
+    """Cari coin di CoinGecko kalau tidak ada di COIN_MAP."""
+    try:
+        url = f"https://api.coingecko.com/api/v3/search?query={query}"
+        d = get(url, timeout=6)
+        if d and d.get("coins") and len(d["coins"]) > 0:
+            coin = d["coins"][0]
+            return coin["id"], coin["symbol"].lower()
+    except:
+        pass
+    return None, None
+
 def detect_coin(text):
     """Deteksi coin yang disebutkan dalam pesan."""
     text_lower = text.lower()
     words = re.findall(r'\b\w+\b', text_lower)
+
+    # Cek static map dulu (cepat)
     for word in words:
         if word in COIN_MAP:
             return word, COIN_MAP[word]
+
+    # Dynamic search ke CoinGecko sebagai fallback
+    for word in words:
+        if len(word) >= 2 and word not in TRIGGER_WORDS and word not in {"yang","dan","atau","ini","itu","mau","bisa","ada","tidak","gimana","setup","analisis","analisa"}:
+            coin_id, sym = search_coin_dynamic(word)
+            if coin_id:
+                COIN_MAP[word] = coin_id  # cache untuk request berikutnya
+                return word, coin_id
+
     return None, None
 
 def is_triggered(text):
