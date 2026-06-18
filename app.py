@@ -8,6 +8,7 @@ Stack: Flask + Groq (Llama 3.1 70B) + CoinGecko
 import os
 import re
 import json
+import time
 import urllib.request
 import urllib.parse
 import requests
@@ -15,6 +16,12 @@ import threading
 from flask import Flask, request, jsonify
 from groq import Groq
 from datetime import datetime, timezone
+
+# ─── CACHE (hindari rate limit CoinGecko) ────────────────────────────────────
+COIN_CACHE  = {}  # {coin_id: {"data": {...}, "expires": float}}
+GLOBAL_CACHE = {"data": None, "expires": 0}
+FG_CACHE     = {"data": None, "expires": 0}
+CACHE_TTL   = 180  # 3 menit
 
 app = Flask(__name__)
 
@@ -223,7 +230,14 @@ def is_triggered(text, has_history=False):
 # ─── DATA FETCHER ─────────────────────────────────────────────────────────────
 
 def fetch_coin_data(coin_id):
-    """Ambil data lengkap dari CoinGecko."""
+    """Ambil data dari CoinGecko dengan caching 3 menit."""
+    now = time.time()
+
+    # Cek cache dulu
+    if coin_id in COIN_CACHE and COIN_CACHE[coin_id]["expires"] > now:
+        print(f"[CACHE] {coin_id}")
+        return COIN_CACHE[coin_id]["data"]
+
     url = (
         f"https://api.coingecko.com/api/v3/coins/{coin_id}"
         f"?localization=false&tickers=false&community_data=false&developer_data=false"
@@ -233,7 +247,7 @@ def fetch_coin_data(coin_id):
         r.raise_for_status()
         d = r.json()
         m = d.get("market_data", {})
-        return {
+        result = {
             "name"       : d.get("name", coin_id),
             "symbol"     : d.get("symbol", "").upper(),
             "price"      : m.get("current_price", {}).get("usd", 0),
@@ -254,9 +268,15 @@ def fetch_coin_data(coin_id):
             "fdv"        : m.get("fully_diluted_valuation", {}).get("usd", 0),
             "desc"       : d.get("description", {}).get("en", "")[:300],
         }
+        COIN_CACHE[coin_id] = {"data": result, "expires": now + CACHE_TTL}
+        return result
     except Exception as e:
         print(f"[CoinGecko ERR] {coin_id}: {e}")
-        # Fallback: cari ID yang benar via search
+        # Kalau ada cache lama, pakai itu daripada error
+        if coin_id in COIN_CACHE:
+            print(f"[CACHE STALE] Using old cache for {coin_id}")
+            return COIN_CACHE[coin_id]["data"]
+        # Fallback search
         try:
             sr = requests.get(
                 f"https://api.coingecko.com/api/v3/search?query={coin_id}",
@@ -266,33 +286,43 @@ def fetch_coin_data(coin_id):
             if coins:
                 new_id = coins[0]["id"]
                 if new_id != coin_id:
-                    print(f"[CoinGecko] Retry with: {new_id}")
                     return fetch_coin_data(new_id)
         except:
             pass
         return None
 
 def fetch_global():
-    """Kondisi global market."""
+    now = time.time()
+    if GLOBAL_CACHE["expires"] > now and GLOBAL_CACHE["data"]:
+        return GLOBAL_CACHE["data"]
     try:
         r = requests.get("https://api.coingecko.com/api/v3/global", timeout=10,
                          headers={"User-Agent": "Mozilla/5.0"})
         d = r.json().get("data", {})
-        return {
+        result = {
             "mc_change_24h": d.get("market_cap_change_percentage_24h_usd", 0),
             "btc_dom"      : d.get("market_cap_percentage", {}).get("btc", 0),
             "total_mc"     : d.get("total_market_cap", {}).get("usd", 0),
         }
+        GLOBAL_CACHE["data"]    = result
+        GLOBAL_CACHE["expires"] = now + CACHE_TTL
+        return result
     except:
-        return None
+        return GLOBAL_CACHE.get("data")
 
 def fetch_fear_greed():
+    now = time.time()
+    if FG_CACHE["expires"] > now and FG_CACHE["data"]:
+        return FG_CACHE["data"]
     try:
         r = requests.get("https://api.alternative.me/fng/", timeout=8)
         d = r.json()
-        return {"value": int(d["data"][0]["value"]), "label": d["data"][0]["value_classification"]}
+        result = {"value": int(d["data"][0]["value"]), "label": d["data"][0]["value_classification"]}
+        FG_CACHE["data"]    = result
+        FG_CACHE["expires"] = now + CACHE_TTL
+        return result
     except:
-        return None
+        return FG_CACHE.get("data")
 
 # ─── AI ANALYST ───────────────────────────────────────────────────────────────
 
