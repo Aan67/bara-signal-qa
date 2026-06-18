@@ -286,6 +286,11 @@ def send_typing(chat_id):
 def process_message(chat_id, msg_id, text, username):
     """Proses pesan di background thread."""
     try:
+        # Handle /test
+        if text.startswith("/test"):
+            send_message(chat_id, "Bot aktif dan bisa kirim pesan!", reply_to=msg_id)
+            return
+
         # Handle /start
         if text.startswith("/start"):
             send_message(chat_id,
