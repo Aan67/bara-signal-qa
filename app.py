@@ -218,14 +218,14 @@ def detect_coin(text, last_coin_id=None):
 
     return None, None
 
-def is_triggered(text, has_history=False):
+def is_triggered(text, is_reply_to_bot=False):
     """Cek apakah pesan perlu direspon bot."""
     text_lower = text.lower()
     has_coin    = any(w in text_lower for w in COIN_MAP)
     has_trigger = any(w in text_lower for w in TRIGGER_WORDS)
     has_command = text_lower.startswith("/")
-    # Jika ada conversation history, respon semua pertanyaan lanjutan
-    return has_command or has_coin or has_trigger or has_history
+    # Respon jika: ada coin/trigger, atau reply langsung ke bot
+    return has_command or has_coin or has_trigger or is_reply_to_bot
 
 # ─── DATA FETCHER ─────────────────────────────────────────────────────────────
 
@@ -437,7 +437,7 @@ def send_typing(chat_id):
 
 # ─── WEBHOOK HANDLER ──────────────────────────────────────────────────────────
 
-def process_message(chat_id, msg_id, text, username):
+def process_message(chat_id, msg_id, text, username, is_reply_bot=False):
     """Proses pesan dengan conversation history."""
     try:
         # Commands
@@ -479,9 +479,8 @@ def process_message(chat_id, msg_id, text, username):
 
         # Ambil conversation state
         conv = CONV.get(chat_id, {"coin_id": None, "coin_name": None, "history": []})
-        has_history = len(conv["history"]) > 0
 
-        if not is_triggered(text, has_history):
+        if not is_triggered(text, is_reply_bot):
             return
 
         # Deteksi coin (dengan fallback ke coin terakhir)
@@ -562,7 +561,11 @@ def webhook():
         if not text:
             return jsonify({"ok": True})
 
-        process_message(chat_id, msg_id, text, username)
+        # Cek apakah pesan adalah reply ke bot
+        reply_to     = msg.get("reply_to_message", {})
+        is_reply_bot = reply_to.get("from", {}).get("is_bot", False)
+
+        process_message(chat_id, msg_id, text, username, is_reply_bot)
 
     except Exception as e:
         print(f"[WEBHOOK ERR] {e}")
