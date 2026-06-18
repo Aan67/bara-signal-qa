@@ -75,7 +75,8 @@ COIN_MAP = {
     # AI / Tech
     "fet": "fetch-ai",
     "rndr": "render-token",     "render": "render-token",
-    "wld": "worldcoin-wld",
+    "wld": "worldcoin-wld",     "worldcoin": "worldcoin-wld",
+    "play": "playsout",
     "virtual": "virtual-protocol",
     "ai16z": "ai16z",
     "aixbt": "aixbt-by-virtuals",
@@ -380,7 +381,7 @@ def send_message(chat_id, text, reply_to=None):
     return tg_post("sendMessage", payload)
 
 def send_typing(chat_id):
-    tg_post("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+    pass  # disabled - proxy hanya izin 1 TG call per request
 
 # ─── WEBHOOK HANDLER ──────────────────────────────────────────────────────────
 
@@ -433,15 +434,13 @@ def process_message(chat_id, msg_id, text, username):
             )
             return
 
-        send_typing(chat_id)
-
-        # Sequential fetch — lebih cepat dan hindari proxy timeout
+        # Sequential fetch
         coin_data   = fetch_coin_data(coin_id)
         global_data = fetch_global()
         fg          = fetch_fear_greed()
 
         if not coin_data:
-            send_message(chat_id, f"Gagal fetch data {sym.upper()}. Coba lagi.")
+            send_message(chat_id, f"Data {sym.upper()} tidak ditemukan. Coba nama lengkapnya.")
             return
 
         analysis = analyze_coin(coin_data, global_data, fg, text)
