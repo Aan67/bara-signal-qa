@@ -7,6 +7,9 @@ Stack: Flask + Groq (Llama 3.1 70B) + CoinGecko
 
 import os
 import re
+import json
+import urllib.request
+import urllib.parse
 import requests
 import threading
 from flask import Flask, request, jsonify
@@ -256,30 +259,32 @@ Berikan analisis lengkap berdasarkan data di atas.
 
 # ─── TELEGRAM SENDER ──────────────────────────────────────────────────────────
 
+def tg_post(method, payload):
+    """Kirim request ke Telegram API pakai urllib (bypass SSL issue Vercel)."""
+    url  = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}"
+    data = json.dumps(payload).encode("utf-8")
+    req  = urllib.request.Request(
+        url, data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            result = json.loads(resp.read().decode())
+            print(f"[TG {method}] ok={result.get('ok')}")
+            return result
+    except Exception as e:
+        print(f"[TG ERR {method}] {e}")
+        return None
+
 def send_message(chat_id, text, reply_to=None):
-    payload = {
-        "chat_id": chat_id,
-        "text"   : text[:4000],  # Telegram max 4096 chars
-    }
+    payload = {"chat_id": chat_id, "text": text[:4000]}
     if reply_to:
         payload["reply_to_message_id"] = reply_to
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-            json=payload, timeout=15,
-        )
-    except Exception as e:
-        print(f"[TG ERR] {e}")
+    return tg_post("sendMessage", payload)
 
 def send_typing(chat_id):
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatAction",
-            json={"chat_id": chat_id, "action": "typing"},
-            timeout=5,
-        )
-    except:
-        pass
+    tg_post("sendChatAction", {"chat_id": chat_id, "action": "typing"})
 
 # ─── WEBHOOK HANDLER ──────────────────────────────────────────────────────────
 
