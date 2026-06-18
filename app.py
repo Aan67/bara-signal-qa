@@ -8,6 +8,7 @@ Stack: Flask + Groq (Llama 3.1 70B) + CoinGecko
 import os
 import re
 import requests
+import threading
 from flask import Flask, request, jsonify
 from groq import Groq
 from datetime import datetime, timezone
@@ -240,13 +241,13 @@ Berikan analisis lengkap berdasarkan data di atas.
 
     try:
         response = groq_client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user",   "content": ctx},
             ],
             temperature=0.7,
-            max_tokens=1200,
+            max_tokens=800,
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -257,9 +258,8 @@ Berikan analisis lengkap berdasarkan data di atas.
 
 def send_message(chat_id, text, reply_to=None):
     payload = {
-        "chat_id"   : chat_id,
-        "text"      : text,
-        "parse_mode": "Markdown",
+        "chat_id": chat_id,
+        "text"   : text[:4000],  # Telegram max 4096 chars
     }
     if reply_to:
         payload["reply_to_message_id"] = reply_to
@@ -283,6 +283,82 @@ def send_typing(chat_id):
 
 # ─── WEBHOOK HANDLER ──────────────────────────────────────────────────────────
 
+def process_message(chat_id, msg_id, text, username):
+    """Proses pesan di background thread."""
+    try:
+        # Handle /start
+        if text.startswith("/start"):
+            send_message(chat_id,
+                "Halo! Saya Bara Signal AI\n\n"
+                "Tanya apa saja tentang crypto:\n"
+                "- analisis BTC\n"
+                "- setup untuk ETH sekarang\n"
+                "- gimana kondisi SOL\n"
+                "- rekomendasi DOGE\n\n"
+                "Saya berikan analisis real-time + trade setup lengkap!",
+                reply_to=msg_id
+            )
+            return
+
+        # Handle /help
+        if text.startswith("/help"):
+            send_message(chat_id,
+                "Cara Pakai Bara Signal AI:\n\n"
+                "Sebut nama coin + pertanyaan:\n"
+                "- analisis BTC\n"
+                "- setup long ETH\n"
+                "- gimana SOL hari ini\n"
+                "- BTC mau pump atau dump?\n"
+                "- entry point DOGE\n\n"
+                "Coin: BTC ETH SOL BNB XRP ADA DOGE AVAX DOT LINK MATIC UNI ATOM LTC NEAR TRX XLM ZEC SUI APT dan banyak lagi!\n\n"
+                "BUKAN SARAN FINANSIAL - DYOR",
+                reply_to=msg_id
+            )
+            return
+
+        if not is_triggered(text):
+            return
+
+        sym, coin_id = detect_coin(text)
+        if not coin_id:
+            send_message(chat_id,
+                "Coin tidak dikenali.\nContoh: analisis BTC, setup ETH, gimana SOL",
+                reply_to=msg_id
+            )
+            return
+
+        send_typing(chat_id)
+
+        # Fetch semua data parallel
+        results = {}
+        def do_coin():   results["coin"]   = fetch_coin_data(coin_id)
+        def do_global(): results["global"] = fetch_global()
+        def do_fg():     results["fg"]     = fetch_fear_greed()
+
+        threads = [threading.Thread(target=f) for f in [do_coin, do_global, do_fg]]
+        for t in threads: t.start()
+        for t in threads: t.join(timeout=8)
+
+        coin_data   = results.get("coin")
+        global_data = results.get("global")
+        fg          = results.get("fg")
+
+        if not coin_data:
+            send_message(chat_id, f"Gagal fetch data {sym.upper()}. Coba lagi.", reply_to=msg_id)
+            return
+
+        send_typing(chat_id)
+        analysis = analyze_coin(coin_data, global_data, fg, text)
+        send_message(chat_id, analysis, reply_to=msg_id)
+        print(f"[DONE] {username} -> {sym.upper()}")
+
+    except Exception as e:
+        print(f"[PROCESS ERR] {e}")
+        try:
+            send_message(chat_id, "Terjadi error, coba lagi.", reply_to=msg_id)
+        except:
+            pass
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
@@ -293,82 +369,20 @@ def webhook():
     if not msg:
         return jsonify({"ok": True})
 
-    chat_id    = msg["chat"]["id"]
-    msg_id     = msg["message_id"]
-    text       = msg.get("text", "")
-    user       = msg.get("from", {})
-    username   = user.get("first_name", "User")
+    chat_id  = msg["chat"]["id"]
+    msg_id   = msg["message_id"]
+    text     = msg.get("text", "")
+    username = msg.get("from", {}).get("first_name", "User")
 
     if not text:
         return jsonify({"ok": True})
 
     print(f"[MSG] {username}: {text[:80]}")
 
-    # Handle /start
-    if text.startswith("/start"):
-        send_message(chat_id,
-            f"👋 Halo! Saya *Bara Signal AI*\n\n"
-            f"Tanya apa saja tentang crypto:\n"
-            f"• `analisis BTC`\n"
-            f"• `setup untuk ETH sekarang`\n"
-            f"• `gimana kondisi SOL`\n"
-            f"• `rekomendasi DOGE`\n\n"
-            f"Saya akan berikan analisis real-time + trade setup lengkap! 🚀",
-            reply_to=msg_id
-        )
-        return jsonify({"ok": True})
-
-    # Handle /help
-    if text.startswith("/help"):
-        send_message(chat_id,
-            f"📖 *Cara Pakai Bara Signal AI:*\n\n"
-            f"Cukup sebut nama coin + pertanyaan:\n"
-            f"• `analisis BTC`\n"
-            f"• `setup long ETH`\n"
-            f"• `gimana SOL hari ini`\n"
-            f"• `BTC mau pump atau dump?`\n"
-            f"• `entry point DOGE`\n\n"
-            f"Coin yang didukung: BTC ETH SOL BNB XRP ADA DOGE AVAX DOT LINK MATIC UNI ATOM LTC NEAR TRX XLM ZEC SUI APT OP ARB PEPE SHIB TON INJ SEI dan masih banyak lagi!\n\n"
-            f"⚠️ BUKAN SARAN FINANSIAL — DYOR",
-            reply_to=msg_id
-        )
-        return jsonify({"ok": True})
-
-    # Cek apakah perlu direspon
-    if not is_triggered(text):
-        return jsonify({"ok": True})
-
-    # Deteksi coin
-    sym, coin_id = detect_coin(text)
-    if not coin_id:
-        send_message(chat_id,
-            f"⚠️ Coin tidak dikenali.\n"
-            f"Contoh: `analisis BTC`, `setup ETH`, `gimana SOL`",
-            reply_to=msg_id
-        )
-        return jsonify({"ok": True})
-
-    # Kirim typing indicator
-    send_typing(chat_id)
-
-    # Fetch data
-    print(f"[FETCH] {coin_id}...")
-    coin_data   = fetch_coin_data(coin_id)
-    global_data = fetch_global()
-    fg          = fetch_fear_greed()
-
-    if not coin_data:
-        send_message(chat_id, f"❌ Gagal fetch data {sym.upper()}. Coba lagi.", reply_to=msg_id)
-        return jsonify({"ok": True})
-
-    # Generate AI analysis
-    send_typing(chat_id)
-    print(f"[AI] Analyzing {sym.upper()}...")
-    analysis = analyze_coin(coin_data, global_data, fg, text)
-
-    # Kirim jawaban
-    send_message(chat_id, analysis, reply_to=msg_id)
-    print(f"[DONE] Replied to {username} about {sym.upper()}")
+    # Proses di background — Vercel langsung return 200
+    t = threading.Thread(target=process_message, args=(chat_id, msg_id, text, username))
+    t.daemon = True
+    t.start()
 
     return jsonify({"ok": True})
 
