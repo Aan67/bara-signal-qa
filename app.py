@@ -203,34 +203,15 @@ def is_triggered(text):
 # ─── DATA FETCHER ─────────────────────────────────────────────────────────────
 
 def fetch_coin_data(coin_id):
-    """Ambil data lengkap dari CoinGecko. Auto-retry dengan search kalau ID salah."""
-    def _fetch(cid):
-        url = (
-            f"https://api.coingecko.com/api/v3/coins/{cid}"
-            f"?localization=false&tickers=false&community_data=false&developer_data=false"
-        )
-        r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
-        r.raise_for_status()
-        return r.json()
-
+    """Ambil data lengkap dari CoinGecko."""
+    url = (
+        f"https://api.coingecko.com/api/v3/coins/{coin_id}"
+        f"?localization=false&tickers=false&community_data=false&developer_data=false"
+    )
     try:
-        d = _fetch(coin_id)
-    except Exception as e:
-        print(f"[CoinGecko ERR] {coin_id}: {e} — trying search fallback")
-        # Coba cari ID yang benar via search
-        try:
-            search_url = f"https://api.coingecko.com/api/v3/search?query={coin_id}"
-            sr = requests.get(search_url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-            coins = sr.json().get("coins", [])
-            if coins:
-                new_id = coins[0]["id"]
-                print(f"[CoinGecko] Found via search: {new_id}")
-                d = _fetch(new_id)
-            else:
-                return None
-        except Exception as e2:
-            print(f"[CoinGecko search ERR] {e2}")
-            return None
+        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        r.raise_for_status()
+        d = r.json()
         m = d.get("market_data", {})
         return {
             "name"       : d.get("name", coin_id),
@@ -254,7 +235,21 @@ def fetch_coin_data(coin_id):
             "desc"       : d.get("description", {}).get("en", "")[:300],
         }
     except Exception as e:
-        print(f"[CoinGecko ERR] {e}")
+        print(f"[CoinGecko ERR] {coin_id}: {e}")
+        # Fallback: cari ID yang benar via search
+        try:
+            sr = requests.get(
+                f"https://api.coingecko.com/api/v3/search?query={coin_id}",
+                timeout=8, headers={"User-Agent": "Mozilla/5.0"}
+            )
+            coins = sr.json().get("coins", [])
+            if coins:
+                new_id = coins[0]["id"]
+                if new_id != coin_id:
+                    print(f"[CoinGecko] Retry with: {new_id}")
+                    return fetch_coin_data(new_id)
+        except:
+            pass
         return None
 
 def fetch_global():
