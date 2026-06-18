@@ -435,27 +435,17 @@ def process_message(chat_id, msg_id, text, username):
 
         send_typing(chat_id)
 
-        # Fetch semua data parallel
-        results = {}
-        def do_coin():   results["coin"]   = fetch_coin_data(coin_id)
-        def do_global(): results["global"] = fetch_global()
-        def do_fg():     results["fg"]     = fetch_fear_greed()
-
-        threads = [threading.Thread(target=f) for f in [do_coin, do_global, do_fg]]
-        for t in threads: t.start()
-        for t in threads: t.join(timeout=25)
-
-        coin_data   = results.get("coin")
-        global_data = results.get("global")
-        fg          = results.get("fg")
+        # Sequential fetch — lebih cepat dan hindari proxy timeout
+        coin_data   = fetch_coin_data(coin_id)
+        global_data = fetch_global()
+        fg          = fetch_fear_greed()
 
         if not coin_data:
-            send_message(chat_id, f"Gagal fetch data {sym.upper()}. Coba lagi.", reply_to=msg_id)
+            send_message(chat_id, f"Gagal fetch data {sym.upper()}. Coba lagi.")
             return
 
-        send_typing(chat_id)
         analysis = analyze_coin(coin_data, global_data, fg, text)
-        send_message(chat_id, analysis, reply_to=msg_id)
+        send_message(chat_id, analysis)
         print(f"[DONE] {username} -> {sym.upper()}")
 
     except Exception as e:
