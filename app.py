@@ -448,7 +448,7 @@ def process_message(chat_id, msg_id, text, username):
 
         threads = [threading.Thread(target=f) for f in [do_coin, do_global, do_fg]]
         for t in threads: t.start()
-        for t in threads: t.join(timeout=8)
+        for t in threads: t.join(timeout=25)
 
         coin_data   = results.get("coin")
         global_data = results.get("global")
