@@ -379,10 +379,8 @@ def webhook():
 
     print(f"[MSG] {username}: {text[:80]}")
 
-    # Proses di background — Vercel langsung return 200
-    t = threading.Thread(target=process_message, args=(chat_id, msg_id, text, username))
-    t.daemon = True
-    t.start()
+    # Proses synchronous — selesaikan dulu baru return 200
+    process_message(chat_id, msg_id, text, username)
 
     return jsonify({"ok": True})
 
