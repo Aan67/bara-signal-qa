@@ -288,7 +288,7 @@ def process_message(chat_id, msg_id, text, username):
     try:
         # Handle /test
         if text.startswith("/test"):
-            send_message(chat_id, "Bot aktif dan bisa kirim pesan!", reply_to=msg_id)
+            send_message(chat_id, "Bot aktif! Vercel + Webhook berjalan normal.")
             return
 
         # Handle /start
@@ -366,26 +366,32 @@ def process_message(chat_id, msg_id, text, username):
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.json
-    if not data:
-        return jsonify({"ok": True})
+    try:
+        data = request.get_json(force=True, silent=True)
+        print(f"[WEBHOOK] Received: {str(data)[:200]}")
 
-    msg = data.get("message") or data.get("edited_message")
-    if not msg:
-        return jsonify({"ok": True})
+        if not data:
+            print("[WEBHOOK] No data received")
+            return jsonify({"ok": True})
 
-    chat_id  = msg["chat"]["id"]
-    msg_id   = msg["message_id"]
-    text     = msg.get("text", "")
-    username = msg.get("from", {}).get("first_name", "User")
+        msg = data.get("message") or data.get("edited_message")
+        if not msg:
+            return jsonify({"ok": True})
 
-    if not text:
-        return jsonify({"ok": True})
+        chat_id  = msg["chat"]["id"]
+        msg_id   = msg["message_id"]
+        text     = msg.get("text", "")
+        username = msg.get("from", {}).get("first_name", "User")
 
-    print(f"[MSG] {username}: {text[:80]}")
+        print(f"[MSG] chat={chat_id} user={username} text={text[:80]}")
 
-    # Proses synchronous — selesaikan dulu baru return 200
-    process_message(chat_id, msg_id, text, username)
+        if not text:
+            return jsonify({"ok": True})
+
+        process_message(chat_id, msg_id, text, username)
+
+    except Exception as e:
+        print(f"[WEBHOOK ERR] {e}")
 
     return jsonify({"ok": True})
 
